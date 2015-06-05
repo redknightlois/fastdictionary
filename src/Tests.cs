@@ -17,7 +17,7 @@ namespace Dictionary
             Assert.Equal(32, dict.Capacity);
             Assert.NotNull(dict.Comparer);
 
-            dict = new FastDictionary<int, int>(null);
+            dict = new FastDictionary<int, int>(null as IEqualityComparer<int>);
             Assert.Equal(0, dict.Count);
             Assert.Equal(32, dict.Capacity);
             Assert.NotNull(dict.Comparer);
@@ -183,7 +183,7 @@ namespace Dictionary
 
 
             Assert.Equal(100, dict.Count);
-            Assert.Equal(128, dict.Capacity);
+            Assert.Equal(256, dict.Capacity);
         }
 
         [Fact]
@@ -227,7 +227,7 @@ namespace Dictionary
             }
 
             Assert.Equal(100, dict.Count);
-            Assert.Equal(128, dict.Capacity);
+            Assert.Equal(256, dict.Capacity);
         }
 
         [Fact]
@@ -273,7 +273,29 @@ namespace Dictionary
             }
 
             Assert.Equal(50, dict.Count);
-            Assert.Equal(128, dict.Capacity);
+            Assert.Equal(256, dict.Capacity);
+        }
+
+        [Fact]
+        public void ConsecutiveInsertsWithShrink()
+        {
+            var dict = new FastDictionary<int, int>();
+
+            for (int i = 0; i < 100; i++)
+                dict[i] = i;
+
+            dict.Clear();
+
+            for (int i = 0; i < 33; i++)
+                dict[i] = i;
+
+            dict.Remove(32);
+
+            int value;
+            Assert.True(dict.TryGetValue(0, out value));
+            
+            Assert.Equal(32, dict.Count);
+            Assert.True(dict.Capacity > 32);
         }
 
         [Fact]
@@ -325,39 +347,30 @@ namespace Dictionary
             Assert.Throws<ArgumentException>(() => dict.Add(1, 3));
         }
 
+
         [Fact]
-        public void ShrinkTo()
+        public void EnumeratorsWithJumps()
         {
-            var dict = new FastDictionary<int, int>(256);
-            for (int i = 0; i < 100; i += 10)
-                dict[i] = i;
-            
-            dict.Shrink(128);
-            Assert.Equal(10, dict.Count);
-            Assert.Equal(128, dict.Capacity);
-            for (int i = 0; i < 100; i += 10)
-                Assert.True(dict.Contains(i));
+            var dict = new FastDictionary<int, int>(16);
+            dict[1] = 1;
+            dict[2] = 2;
+            dict[15] = 15;
 
-            dict.Shrink(63);
-            Assert.Equal(10, dict.Count);
-            Assert.Equal(64, dict.Capacity);
-            for (int i = 0; i < 100; i += 10)
-                Assert.True(dict.Contains(i));
+            int count = 0;
+            foreach (var item in dict.Keys)
+                count++;
+            Assert.Equal(3, count);
 
-            dict.Shrink(63);
-            Assert.Equal(10, dict.Count);
-            Assert.Equal(64, dict.Capacity);
-            for (int i = 0; i < 100; i += 10)
-                Assert.True(dict.Contains(i));
+            count = 0;
+            foreach (var item in dict.Values)
+                count++;
+            Assert.Equal(3, count);
 
-            Assert.Throws<ArgumentException>(() => dict.Shrink(8));
-
-            dict.Shrink();
-            Assert.Equal(10, dict.Count);
-            Assert.Equal(16, dict.Capacity);
-            for (int i = 0; i < 100; i += 10)
-                Assert.True(dict.Contains(i));
-        }
+            count = 0;
+            foreach (var item in dict)
+                count++;
+            Assert.Equal(3, count);
+        }      
 
         [Fact]
         public void Clear()
@@ -471,5 +484,41 @@ namespace Dictionary
             Assert.False(dict.Contains(1));
             Assert.False(dict.Contains(2));
         }
+
+        [Fact]
+        public void InsertAndRemoveWithoutGrowth()
+        {
+            var dict = new FastDictionary<long, int>(8);
+
+            for (int i = 0; i < 100; i++)
+            {
+                dict[i] = i;
+                dict.Remove(i);
+                int dummy;
+                Assert.False(dict.TryGetValue(i, out dummy));
+            }
+
+            Assert.Equal(0, dict.Count);
+            Assert.Equal(8, dict.Capacity);
+        }
+
+        [Fact]
+        public void AddAndRemoveWithoutGrowth()
+        {
+            var dict = new FastDictionary<long, int>(8);
+
+            for (int i = 0; i < 100; i++)
+            {
+                dict.Add(i, i);
+                dict.Remove(i);
+                int dummy;
+                Assert.False(dict.TryGetValue(i, out dummy));
+            }
+
+            Assert.Equal(0, dict.Count);
+            Assert.Equal(8, dict.Capacity);
+        }
+
+
     }
 }
