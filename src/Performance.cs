@@ -21,13 +21,17 @@ namespace Dictionary
             {
                 tuples[i] = rnd.Next();
                 tuplesString[i] = tuples[i].ToString();                   
-            }                
-
-            int tries = 5;
+            }
 
             Console.WriteLine("Structs: " + BenchmarkCreationOfArrayOfStructs());
             Console.WriteLine("Arrays: " + BenchmarkCreationOfMultipleArrays());
 
+            int tries = 100000;
+            Console.WriteLine("Structs with temps: " + BenchmarkAccessWithTemps(tries));
+            Console.WriteLine("Structs without temps: " + BenchmarkAccessWithoutTemps(tries));
+            Console.WriteLine("Structs with inline references: " + BenchmarkAccessWithInlineRef(tries));
+
+            tries = 5;
 
             Console.WriteLine("Native: " + BenchmarkNativeDictionary(tuples, tries));
             Console.WriteLine("Fast: " + BenchmarkFastDictionary(tuples, tries));
@@ -206,6 +210,94 @@ namespace Dictionary
             return fast.ElapsedMilliseconds;
         }
 
+        public static long BenchmarkAccessWithoutTemps(int tries)
+        {
+            TryEntry<object, object>[] value = new TryEntry<object, object>[iterations];
+            for (int i = 0; i < iterations; i++)
+            {
+                value[i].Hash = 18;
+                value[i].Key = new object();
+                value[i].Value = new object();
+            }
+
+            int count = 0;
+
+            var fast = Stopwatch.StartNew();
+
+            for (int @try = 0; @try < tries; @try++)
+            {
+                for (int i = 0; i < iterations; i++)
+                {
+                    if (value[i].Hash == 18 && value[i].Key != null && value[i].Value == null)
+                        count++;
+                }
+            }
+
+            fast.Stop();
+            return fast.ElapsedTicks;
+        }
+
+
+        public static long BenchmarkAccessWithTemps(int tries)
+        {
+            TryEntry<object, object>[] value = new TryEntry<object, object>[iterations];
+            for (int i = 0; i < iterations; i++)
+            {
+                value[i].Hash = 18;
+                value[i].Key = new object();
+                value[i].Value = new object();
+            }
+
+            int count = 0;
+
+            var fast = Stopwatch.StartNew();
+            for (int @try = 0; @try < tries; @try++)
+            {
+                for (int i = 0; i < iterations; i++)
+                {
+                    TryEntry<object, object> tmp = value[i];
+                    if (tmp.Hash == 18 && tmp.Key != null && tmp.Value == null)
+                        count++;
+                }
+            }
+
+            fast.Stop();
+            return fast.ElapsedTicks;
+        }
+
+        public static long BenchmarkAccessWithInlineRef(int tries)
+        {
+            TryEntry<object, object>[] value = new TryEntry<object, object>[iterations];
+            for (int i = 0; i < iterations; i++)
+            {
+                value[i].Hash = 18;
+                value[i].Key = new object();
+                value[i].Value = new object();
+            }
+
+            int count = 0;
+
+            var fast = Stopwatch.StartNew();
+            for (int @try = 0; @try < tries; @try++)
+            {
+                for (int i = 0; i < iterations; i++)
+                {
+                    if (Check(ref value[i]))
+                        count++;
+                }
+            }
+
+            fast.Stop();
+            return fast.ElapsedTicks;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool Check(ref TryEntry<object, object> tmp)
+        {
+            return tmp.Hash == 18 && tmp.Key != null && tmp.Value == null;
+        }
+
+
         public static long BenchmarkCreationOfMultipleArrays()
         {
             var fast = Stopwatch.StartNew();
@@ -213,7 +305,7 @@ namespace Dictionary
             uint[] hashes;
             object[] keys;
             object[] values;
-
+            
             for (int i = 1; i < iterations; i++)
             {
                 hashes = new uint[iterations];

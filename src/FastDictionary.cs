@@ -81,9 +81,21 @@ namespace Dictionary
         // risk of collisions.
         static int tLoadFactor = 6;
 
-        private uint[] _hashes;
-        private TKey[] _keys;
-        private TValue[] _values;
+        private struct Entry
+        {
+            public uint Hash;
+            public TKey Key;
+            public TValue Value;
+
+            public Entry ( uint hash, TKey key, TValue value)
+            {
+                this.Hash = hash;
+                this.Key = key;
+                this.Value = value;
+            }
+        }
+
+        private Entry[] _entries;
 
         private int _capacity;
 
@@ -156,30 +168,20 @@ namespace Dictionary
             if (comparer == src.comparer)
             {
                 // Initialization through copy (very efficient) because the comparer is the same.
-                this._keys = new TKey[newCapacity];
-                this._values = new TValue[newCapacity];
-                this._hashes = new uint[newCapacity];
-
-                Array.Copy(src._keys, _keys, newCapacity);
-                Array.Copy(src._values, _values, newCapacity);
-                Array.Copy(src._hashes, _hashes, newCapacity);
+                this._entries = new Entry[newCapacity];
+                Array.Copy(src._entries, _entries, newCapacity);
             }
             else
             {
                 // Initialization through rehashing because the comparer is not the same.
-                var keys = new TKey[newCapacity];
-                var values = new TValue[newCapacity];
-                var hashes = new uint[newCapacity];
-
-                BlockCopyMemoryHelper.Memset(hashes, 0, newCapacity, kUnusedHash);
+                var entries = new Entry[newCapacity];
+                BlockCopyMemoryHelper.Memset(entries, new Entry(kUnusedHash, default(TKey), default(TValue)));
 
                 // Creating a temporary alias to use for rehashing.
-                this._keys = src._keys;
-                this._values = src._values;
-                this._hashes = src._hashes;
+                this._entries = src._entries;
 
                 // This call will rewrite the aliases
-                Rehash(keys, values, hashes);
+                Rehash(entries);
             }
         }
 
@@ -202,11 +204,8 @@ namespace Dictionary
             this._initialCapacity = newCapacity;
 
             // Initialization
-            this._keys = new TKey[newCapacity];
-            this._values = new TValue[newCapacity];
-            this._hashes = new uint[newCapacity];
-
-            BlockCopyMemoryHelper.Memset(_hashes, 0, newCapacity, kUnusedHash);
+            this._entries = new Entry[newCapacity];
+            BlockCopyMemoryHelper.Memset(this._entries, new Entry(kUnusedHash, default(TKey), default(TValue)));
 
             this._capacity = newCapacity;
 
@@ -238,7 +237,7 @@ namespace Dictionary
             int numProbes = 1;
             do
             {
-                uint nHash = _hashes[bucket];
+                uint nHash = _entries[bucket].Hash;
                 if (nHash == kUnusedHash)
                 {
                     _numberOfUsed++;
@@ -255,7 +254,7 @@ namespace Dictionary
                 }
                 else
                 {
-                    if (nHash == uhash && comparer.Equals(_keys[bucket], key))
+                    if (nHash == uhash && comparer.Equals(_entries[bucket].Key, key))
                         throw new ArgumentException("Cannot add duplicated key.", "key");
                 }
 
@@ -265,9 +264,9 @@ namespace Dictionary
             while (true);
 
         SET:
-            this._hashes[bucket] = uhash;
-            this._keys[bucket] = key;
-            this._values[bucket] = value;
+            this._entries[bucket].Hash = uhash;
+            this._entries[bucket].Key = key;
+            this._entries[bucket].Value = value;
         }
 
         public bool Remove(TKey key)
@@ -291,16 +290,18 @@ namespace Dictionary
         {
             Contract.Ensures(_size <= Contract.OldValue<int>(_size));
 
-            if (_hashes[node] < kDeletedHash)
+            if (_entries[node].Hash < kDeletedHash)
             {
-                SetNode(node, kDeletedHash, default(TKey), default(TValue));
+                _entries[node].Hash = kDeletedHash;
+                _entries[node].Key = default(TKey);
+                _entries[node].Value = default(TValue);
 
                 _numberOfDeleted++;
                 _size--;
             }
 
             Contract.Assert(_numberOfDeleted >= Contract.OldValue<int>(_numberOfDeleted));
-            Contract.Assert(_hashes[node] == kDeletedHash);
+            Contract.Assert(_entries[node].Hash == kDeletedHash);
 
             if (3 * this._numberOfDeleted / 2 > this._capacity - this._numberOfUsed)
             {
@@ -326,22 +327,12 @@ namespace Dictionary
             // Calculate the next power of 2.
             newCapacity = Math.Max(DictionaryHelper.NextPowerOf2(newCapacity), _initialCapacity);
 
-            var keys = new TKey[newCapacity];
-            var values = new TValue[newCapacity];
-            var hashes = new uint[newCapacity];
+            var entries = new Entry[newCapacity];
+            BlockCopyMemoryHelper.Memset(entries, new Entry(kUnusedHash, default(TKey), default(TValue)));
 
-            BlockCopyMemoryHelper.Memset(hashes, 0, newCapacity, kUnusedHash);
-
-            Rehash(keys, values, hashes);
+            Rehash(entries);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void SetNode(int node, uint hash, TKey key, TValue value)
-        {
-            _hashes[node] = hash;
-            _keys[node] = key;
-            _values[node] = value;
-        }
 
         public TValue this[TKey key]
         {
@@ -354,17 +345,15 @@ namespace Dictionary
                 int hash = GetInternalHashCode(key);
                 int bucket = hash % _capacity;
 
-                var hashes = _hashes;
-                var keys = _keys;
-                var values = _values;
+                var entries = _entries;
 
                 uint nHash;
                 int numProbes = 1;
                 do
                 {
-                    nHash = hashes[bucket];
-                    if (nHash == hash && comparer.Equals(keys[bucket], key))
-                        return values[bucket];
+                    nHash = entries[bucket].Hash;
+                    if (nHash == hash && comparer.Equals(entries[bucket].Key, key))
+                        return entries[bucket].Value;
 
                     bucket = (bucket + numProbes) % _capacity;
                     numProbes++;
@@ -390,7 +379,7 @@ namespace Dictionary
                 int numProbes = 1;
                 do
                 {
-                    uint nHash = _hashes[bucket];
+                    uint nHash = _entries[bucket].Hash;
                     if (nHash == kUnusedHash)
                     {
                         _numberOfUsed++;
@@ -407,7 +396,7 @@ namespace Dictionary
                     }
                     else
                     {
-                        if (nHash == uhash && comparer.Equals(_keys[bucket], key))
+                        if (nHash == uhash && comparer.Equals(_entries[bucket].Key, key))
                             goto SET;
                     }
 
@@ -419,22 +408,20 @@ namespace Dictionary
                 while (true);
 
             SET:
-                this._hashes[bucket] = uhash;
-                this._keys[bucket] = key;
-                this._values[bucket] = value;
+                this._entries[bucket].Hash = uhash;
+                this._entries[bucket].Key = key;
+                this._entries[bucket].Value = value;
             }
         }
 
         public void Clear()
         {
-            var keys = new TKey[_capacity];
-            var values = new TValue[_capacity];
+            this._entries = new Entry[_capacity];
+            BlockCopyMemoryHelper.Memset(this._entries, new Entry(kUnusedHash, default(TKey), default(TValue)));
 
-            BlockCopyMemoryHelper.Memset(_hashes, 0, _capacity, kUnusedHash);
-
-            _numberOfUsed = 0;
-            _numberOfDeleted = 0;
-            _size = 0;
+            this._numberOfUsed = 0;
+            this._numberOfDeleted = 0;
+            this._size = 0;
         }
 
         public bool Contains(TKey key)
@@ -452,13 +439,10 @@ namespace Dictionary
             Contract.Requires(newCapacity >= _capacity);
             Contract.Ensures((_capacity & (_capacity - 1)) == 0);
 
-            var keys = new TKey[newCapacity];
-            var values = new TValue[newCapacity];
-            var hashes = new uint[newCapacity];
+            var entries = new Entry[newCapacity];
+            BlockCopyMemoryHelper.Memset(entries, new Entry(kUnusedHash, default(TKey), default(TValue)));
 
-            BlockCopyMemoryHelper.Memset(hashes, 0, newCapacity, kUnusedHash);
-
-            Rehash(keys, values, hashes);
+            Rehash(entries);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -470,18 +454,16 @@ namespace Dictionary
             int hash = GetInternalHashCode(key);
             int bucket = hash % _capacity;
 
-            var hashes = _hashes;
-            var keys = _keys;
-            var values = _values;
+            var entries = _entries;
 
             uint nHash;
             int numProbes = 1;
             do
             {
-                nHash = hashes[bucket];
-                if (nHash == hash && comparer.Equals(keys[bucket], key))
+                nHash = entries[bucket].Hash;
+                if (nHash == hash && comparer.Equals(entries[bucket].Key, key))
                 {
-                    value = values[bucket];
+                    value = entries[bucket].Value;
                     return true;
                 }
 
@@ -508,8 +490,7 @@ namespace Dictionary
             int hash = GetInternalHashCode(key);
             int bucket = hash % _capacity;
 
-            var hashes = _hashes;
-            var keys = _keys;
+            var entries = _entries;
 
             uint uhash = (uint)hash;
             uint numProbes = 1; // how many times we've probed
@@ -517,8 +498,8 @@ namespace Dictionary
             uint nHash;
             do
             {
-                nHash = hashes[bucket];
-                if (nHash == hash && comparer.Equals(keys[bucket], key))
+                nHash = entries[bucket].Hash;
+                if (nHash == hash && comparer.Equals(entries[bucket].Key, key))
                     return bucket;
 
                 bucket = (int)((bucket + numProbes) % _capacity);
@@ -537,45 +518,44 @@ namespace Dictionary
             return comparer.GetHashCode(key) & 0x7FFFFFFF;
         }
 
-        private void Rehash(TKey[] keys, TValue[] values, uint[] hashes)
+        private void Rehash(Entry[] entries)
         {
-            uint capacity = (uint)keys.Length;
+            uint capacity = (uint)entries.Length;
 
             var size = 0;
 
-            for (int it = 0; it < _hashes.Length; it++)
+            for (int it = 0; it < _entries.Length; it++)
             {
-                uint hash = _hashes[it];
+                uint hash = _entries[it].Hash;
                 if (hash >= kDeletedHash) // No interest for the process of rehashing, we are skipping it.
                     continue;
 
                 uint bucket = hash % capacity;
 
                 uint numProbes = 0;
-                while (!(hashes[bucket] == kUnusedHash))
+                while (!(entries[bucket].Hash == kUnusedHash))
                 {
                     numProbes++;
                     bucket = (bucket + numProbes) % capacity;
                 }
 
-                hashes[bucket] = hash;
-                keys[bucket] = _keys[it];
-                values[bucket] = _values[it];
+                entries[bucket].Hash = hash;
+                entries[bucket].Key = _entries[it].Key;
+                entries[bucket].Value = _entries[it].Value;
 
                 size++;
             }
 
-            this._capacity = hashes.Length;
+            this._capacity = entries.Length;
             this._size = size;
-            this._hashes = hashes;
-            this._keys = keys;
-            this._values = values;
+            this._entries = entries;
 
             this._numberOfUsed = size;
             this._numberOfDeleted = 0;
 
             this._nextGrowthThreshold = _capacity * 4 / tLoadFactor;
         }
+
 
         public void CopyTo(KeyValuePair<TKey, TValue>[] array, int index)
         {
@@ -593,14 +573,12 @@ namespace Dictionary
 
             int count = _capacity;
 
-            var hashes = _hashes;
-            var keys = _keys;
-            var values = _values;
+            var entries = _entries;
 
             for (int i = 0; i < count; i++)
             {
-                if (hashes[i] < kDeletedHash)
-                    array[index++] = new KeyValuePair<TKey, TValue>(keys[i], values[i]);
+                if (entries[i].Hash < kDeletedHash)
+                    array[index++] = new KeyValuePair<TKey, TValue>(entries[i].Key, entries[i].Value);
             }
         }
 
@@ -634,25 +612,23 @@ namespace Dictionary
 
             public bool MoveNext()
             {
-                var dict = dictionary;
-
-                var count = dict._capacity;
-                var hashes = dict._hashes;
+                var count = dictionary._capacity;
+                var entries = dictionary._entries;
 
                 // Use unsigned comparison since we set index to dictionary.count+1 when the enumeration ends.
                 // dictionary.count+1 could be negative if dictionary.count is Int32.MaxValue
                 while (index < count)
                 {
-                    if (hashes[index] < kDeletedHash)
+                    if (entries[index].Hash < kDeletedHash)
                     {
-                        current = new KeyValuePair<TKey, TValue>(dict._keys[index], dict._values[index]);
+                        current = new KeyValuePair<TKey, TValue>(entries[index].Key, entries[index].Value);
                         index++;
                         return true;
                     }
                     index++;
                 }
 
-                index = dictionary._capacity + 1;
+                index = count + 1;
                 current = new KeyValuePair<TKey, TValue>();
                 return false;
             }
@@ -704,15 +680,14 @@ namespace Dictionary
 
         public bool ContainsValue(TValue value)
         {
-            var hashes = _hashes;
-            var values = _values;
+            var entries = _entries;
             int count = _capacity;
 
             if (value == null)
             {
                 for (int i = 0; i < count; i++)
                 {
-                    if (hashes[i] < kDeletedHash && values[i] == null)
+                    if (entries[i].Hash < kDeletedHash && entries[i].Value == null)
                         return true;
                 }
             }
@@ -721,7 +696,7 @@ namespace Dictionary
                 EqualityComparer<TValue> c = EqualityComparer<TValue>.Default;
                 for (int i = 0; i < count; i++)
                 {
-                    if (hashes[i] < kDeletedHash && c.Equals(values[i], value))
+                    if (entries[i].Hash < kDeletedHash && c.Equals(entries[i].Value, value))
                         return true;
                 }
             }
@@ -757,14 +732,12 @@ namespace Dictionary
                     throw new ArgumentException("The array plus the offset is too small.");
 
                 int count = dictionary._capacity;
-
-                var hashes = dictionary._hashes;
-                var keys = dictionary._keys;
+                var entries = dictionary._entries;
 
                 for (int i = 0; i < count; i++)
                 {
-                    if (hashes[i] < kDeletedHash)
-                        array[index++] = keys[i];
+                    if (entries[i].Hash < kDeletedHash)
+                        array[index++] = entries[i].Key;
                 }
             }
 
@@ -807,13 +780,12 @@ namespace Dictionary
                 {
                     var count = dictionary._capacity;
 
-                    var hashes = dictionary._hashes;
-                    var keys = dictionary._keys;
+                    var entries = dictionary._entries;
                     while (index < count)
                     {
-                        if (hashes[index] < kDeletedHash)
+                        if (entries[index].Hash < kDeletedHash)
                         {
-                            currentKey = keys[index];
+                            currentKey = entries[index].Key;
                             index++;
                             return true;
                         }
@@ -883,13 +855,11 @@ namespace Dictionary
 
                 int count = dictionary._capacity;
 
-                var hashes = dictionary._hashes;
-                var values = dictionary._values;
-
+                var entries = dictionary._entries;
                 for (int i = 0; i < count; i++)
                 {
-                    if (hashes[i] < kDeletedHash)
-                        array[index++] = values[i];
+                    if (entries[i].Hash < kDeletedHash)
+                        array[index++] = entries[i].Value;
                 }
             }
 
@@ -931,13 +901,12 @@ namespace Dictionary
                 {
                     var count = dictionary._capacity;
 
-                    var hashes = dictionary._hashes;
-                    var values = dictionary._values;
+                    var entries = dictionary._entries;
                     while (index < count)
                     {
-                        if (hashes[index] < kDeletedHash)
+                        if (entries[index].Hash < kDeletedHash)
                         {
-                            currentValue = values[index];
+                            currentValue = entries[index].Value;
                             index++;
                             return true;
                         }
@@ -975,10 +944,10 @@ namespace Dictionary
             }
         }
 
-
         private class BlockCopyMemoryHelper
         {
-            public static void Memset(uint[] array, int start, int count, uint value)
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public static void Memset(Entry[] array, Entry value)
             {
                 int block = 64, index = 0;
                 int length = Math.Min(block, array.Length);
@@ -992,7 +961,7 @@ namespace Dictionary
                 length = array.Length;
                 while (index < length)
                 {
-                    Buffer.BlockCopy(array, 0, array, index * sizeof(uint), Math.Min(block * sizeof(uint), (length - index) * sizeof(uint)));
+                    Array.Copy(array, 0, array, index, Math.Min(block, (length - index)));
                     index += block;
 
                     block *= 2;
