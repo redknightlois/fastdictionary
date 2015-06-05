@@ -432,5 +432,44 @@ namespace Dictionary
             }
             Assert.Equal(100, count);
         }
+
+
+        private class ForceOutOfRangeHashesEqualityComparer : EqualityComparer<int>
+        {
+            public override bool Equals(int x, int y)
+            {
+                return x == y;
+            }
+
+            public override int GetHashCode(int obj)
+            {
+                unchecked
+                {
+                    if (obj % 2 == 0)
+                        return (int)0xFFFFFFFF;
+                    else
+                        return (int)0xFFFFFFFE;
+                }
+            }
+        }
+
+        [Fact]
+        public void UseOfOfBoundsHashes()
+        {
+            var dict = new FastDictionary<int, int>(16, new ForceOutOfRangeHashesEqualityComparer());
+            dict[1] = 1;
+            dict[2] = 2;
+
+            Assert.Equal(1, dict[1]);
+            Assert.Equal(2, dict[2]);
+
+            dict.Remove(1);
+            Assert.False(dict.Contains(1));
+            Assert.True(dict.Contains(2));
+
+            dict.Remove(2);
+            Assert.False(dict.Contains(1));
+            Assert.False(dict.Contains(2));
+        }
     }
 }

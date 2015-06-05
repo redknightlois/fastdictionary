@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.Linq;
 using System.Reflection;
@@ -116,10 +117,7 @@ namespace Dictionary
                 var values = new TValue[newCapacity];
                 var hashes = new uint[newCapacity];
 
-                // BlockCopyMemoryHelper.Memset( hashes, 0, newCapacity, kUnusedHash);
-
-                for (int i = 0; i < newCapacity; i++)
-                    hashes[i] = kUnusedHash;
+                BlockCopyMemoryHelper.Memset(hashes, 0, newCapacity, kUnusedHash);
 
                 _keys = src._keys;
                 _values = src._values;
@@ -145,8 +143,8 @@ namespace Dictionary
             _keys = new TKey[newCapacity];
             _values = new TValue[newCapacity];
             _hashes = new uint[newCapacity];
-            for (int i = 0; i < newCapacity; i++)
-                _hashes[i] = kUnusedHash;
+
+            BlockCopyMemoryHelper.Memset(_hashes, 0, newCapacity, kUnusedHash);
 
             _capacity = newCapacity;
 
@@ -454,8 +452,8 @@ namespace Dictionary
             var keys = new TKey[newCapacity];
             var values = new TValue[newCapacity];
             var hashes = new uint[newCapacity];
-            for (int i = 0; i < newCapacity; i++)
-                hashes[i] = kUnusedHash;
+
+            BlockCopyMemoryHelper.Memset(hashes, 0, newCapacity, kUnusedHash);
 
             Rehash(keys, values, hashes);
 
@@ -544,7 +542,7 @@ namespace Dictionary
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int Lookup(TKey key)
         {
-            int hash = comparer.GetHashCode(key) & 0x7FFFFFFF;
+            int hash = GetInternalHashCode(key);
             int bucket = hash % _capacity;
 
             var hashes = _hashes;
@@ -1022,7 +1020,7 @@ namespace Dictionary
                 length = array.Length;
                 while (index < length)
                 {
-                    Buffer.BlockCopy(array, 0, array, index, Math.Min(block, length - index));
+                    Buffer.BlockCopy(array, 0, array, index * sizeof(uint), Math.Min(block * sizeof(uint), (length - index) * sizeof(uint)));
                     index += block;
 
                     block *= 2;
