@@ -13,24 +13,67 @@ using System.Threading.Tasks;
 
 namespace Dictionary
 {
+    internal static class DictionaryHelper
+    {
+        /// <summary>
+        /// Minimum size we're willing to let hashtables be.
+        /// Must be a power of two, and at least 4.
+        /// Note, however, that for a given hashtable, the initial size is a function of the first constructor arg, and may be > kMinBuckets.
+        /// </summary>
+        internal const int kMinBuckets = 4;
+
+        /// <summary>
+        /// By default, if you don't specify a hashtable size at construction-time, we use this size.  Must be a power of two, and  at least kMinBuckets.
+        /// </summary>
+        internal const int kInitialCapacity = 32;
+
+        internal const int kPowerOfTableSize = 2048;
+
+        private readonly static int[] nextPowerOf2Table = new int[kPowerOfTableSize];
+
+        static DictionaryHelper()
+        {
+            for (int i = 0; i <= kMinBuckets; i++)
+                nextPowerOf2Table[i] = kMinBuckets;
+
+            for (int i = kMinBuckets + 1; i < kPowerOfTableSize; i++)
+                nextPowerOf2Table[i] = NextPowerOf2Internal(i);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static int NextPowerOf2(int v)
+        {
+            if (v < kPowerOfTableSize)
+            {
+                return nextPowerOf2Table[v];
+            }
+            else
+            {
+                return NextPowerOf2Internal(v);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int NextPowerOf2Internal(int v)
+        {
+            v--;
+            v |= v >> 1;
+            v |= v >> 2;
+            v |= v >> 4;
+            v |= v >> 8;
+            v |= v >> 16;
+            v++;
+
+            return v;
+        }
+    }
+
     public class FastDictionary<TKey, TValue> : IEnumerable<KeyValuePair<TKey, TValue>>
     {
         const int InvalidNodePosition = -1;
 
         public const uint kUnusedHash = 0xFFFFFFFF;
         public const uint kDeletedHash = 0xFFFFFFFE;
-
-        /// <summary>
-        /// Minimum size we're willing to let hashtables be.
-        /// Must be a power of two, and at least 4.
-        /// Note, however, that for a given hashtable, the initial size is a function of the first constructor arg, and may be > kMinBuckets.
-        /// </summary>
-        const int kMinBuckets = 4;
-
-        /// <summary>
-        /// By default, if you don't specify a hashtable size at construction-time, we use this size.  Must be a power of two, and  at least kMinBuckets.
-        /// </summary>
-        const int kInitialCapacity = 32;
 
         // TLoadFactor4 - controls hash map load. 4 means 100% load, ie. hashmap will grow
         // when number of items == capacity. Default value of 6 means it grows when
@@ -72,20 +115,6 @@ namespace Dictionary
             get { return Count == 0; }
         }
 
-        private static int[] nextPowerOf2Table;
-
-        static FastDictionary()
-        {
-            nextPowerOf2Table = new int[512];
-
-            for (int i = 0; i <= kMinBuckets; i++)
-                nextPowerOf2Table[i] = kMinBuckets;
-
-            for (int i = kMinBuckets + 1; i < nextPowerOf2Table.Length; i++)
-                nextPowerOf2Table[i] = NextPowerOf2(i);
-        }
-
-
         public FastDictionary(int initialBucketCount, IEnumerable<KeyValuePair<TKey, TValue>> src, IEqualityComparer<TKey> comparer)
             : this(initialBucketCount, comparer)
         {
@@ -96,14 +125,17 @@ namespace Dictionary
                 this[item.Key] = item.Value;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public FastDictionary(FastDictionary<TKey, TValue> src, IEqualityComparer<TKey> comparer)
             : this(src._capacity, src, comparer)
         { }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public FastDictionary(FastDictionary<TKey, TValue> src)
             : this(src._capacity, src, src.comparer)
         { }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public FastDictionary(int initialBucketCount, FastDictionary<TKey, TValue> src, IEqualityComparer<TKey> comparer)
         {
             Contract.Requires(src != null);
@@ -112,7 +144,7 @@ namespace Dictionary
 
             this.comparer = comparer ?? EqualityComparer<TKey>.Default;
 
-            this._initialCapacity = initialBucketCount;
+            this._initialCapacity = DictionaryHelper.NextPowerOf2(initialBucketCount);
             this._capacity = Math.Max(src._capacity, initialBucketCount);
             this._size = src._size;
             this._numberOfUsed = src._numberOfUsed;
@@ -151,22 +183,21 @@ namespace Dictionary
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public FastDictionary(IEqualityComparer<TKey> comparer)
-            : this(kInitialCapacity, comparer)
-        { }    
+            : this(DictionaryHelper.kInitialCapacity, comparer)
+        { }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public FastDictionary(int initialBucketCount, IEqualityComparer<TKey> comparer)
         {
-            Contract.Ensures(_capacity >= initialBucketCount);            
+            Contract.Ensures(_capacity >= initialBucketCount);
 
             this.comparer = comparer ?? EqualityComparer<TKey>.Default;
 
             // Calculate the next power of 2.
-            int newCapacity = initialBucketCount >= kMinBuckets ? initialBucketCount : kMinBuckets;
-            if (newCapacity < nextPowerOf2Table.Length)
-                newCapacity = nextPowerOf2Table[newCapacity];
-            else
-                newCapacity = NextPowerOf2(newCapacity);
+            int newCapacity = initialBucketCount >= DictionaryHelper.kMinBuckets ? initialBucketCount : DictionaryHelper.kMinBuckets;
+            newCapacity = DictionaryHelper.NextPowerOf2(newCapacity);
 
             this._initialCapacity = newCapacity;
 
@@ -186,7 +217,7 @@ namespace Dictionary
             this._nextGrowthThreshold = _capacity * 4 / tLoadFactor;
         }
 
-        public FastDictionary(int initialBucketCount = kInitialCapacity)
+        public FastDictionary(int initialBucketCount = DictionaryHelper.kInitialCapacity)
             : this(initialBucketCount, EqualityComparer<TKey>.Default)
         { }
 
@@ -227,7 +258,7 @@ namespace Dictionary
                     if (nHash == uhash && comparer.Equals(_keys[bucket], key))
                         throw new ArgumentException("Cannot add duplicated key.", "key");
                 }
-                
+
                 bucket = (bucket + numProbes) % _capacity;
                 numProbes++;
             }
@@ -259,8 +290,8 @@ namespace Dictionary
         private void SetDeleted(int node)
         {
             Contract.Ensures(_size <= Contract.OldValue<int>(_size));
-            
-            if ( _hashes[node] < kDeletedHash )
+
+            if (_hashes[node] < kDeletedHash)
             {
                 SetNode(node, kDeletedHash, default(TKey), default(TValue));
 
@@ -293,12 +324,7 @@ namespace Dictionary
             Contract.Ensures(this._numberOfUsed < this._capacity);
 
             // Calculate the next power of 2.
-            if (newCapacity < nextPowerOf2Table.Length)
-                newCapacity = nextPowerOf2Table[newCapacity];
-            else
-                newCapacity = NextPowerOf2(newCapacity);
-
-            newCapacity = Math.Max(newCapacity, _initialCapacity);
+            newCapacity = Math.Max(DictionaryHelper.NextPowerOf2(newCapacity), _initialCapacity);
 
             var keys = new TKey[newCapacity];
             var values = new TValue[newCapacity];
@@ -331,7 +357,7 @@ namespace Dictionary
                 var hashes = _hashes;
                 var keys = _keys;
                 var values = _values;
-                                
+
                 uint nHash;
                 int numProbes = 1;
                 do
@@ -339,7 +365,7 @@ namespace Dictionary
                     nHash = hashes[bucket];
                     if (nHash == hash && comparer.Equals(keys[bucket], key))
                         return values[bucket];
-                    
+
                     bucket = (bucket + numProbes) % _capacity;
                     numProbes++;
 
@@ -433,7 +459,7 @@ namespace Dictionary
             BlockCopyMemoryHelper.Memset(hashes, 0, newCapacity, kUnusedHash);
 
             Rehash(keys, values, hashes);
-        }        
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetValue(TKey key, out TValue value)
@@ -446,7 +472,7 @@ namespace Dictionary
 
             var hashes = _hashes;
             var keys = _keys;
-            var values = _values;            
+            var values = _values;
 
             uint nHash;
             int numProbes = 1;
@@ -458,7 +484,7 @@ namespace Dictionary
                     value = values[bucket];
                     return true;
                 }
-                    
+
                 bucket = (bucket + numProbes) % _capacity;
                 numProbes++;
 
@@ -478,7 +504,7 @@ namespace Dictionary
         /// <returns>Position of the node in the array</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int Lookup(TKey key)
-        {          
+        {
             int hash = GetInternalHashCode(key);
             int bucket = hash % _capacity;
 
@@ -490,7 +516,7 @@ namespace Dictionary
 
             uint nHash;
             do
-            {                
+            {
                 nHash = hashes[bucket];
                 if (nHash == hash && comparer.Equals(keys[bucket], key))
                     return bucket;
@@ -548,21 +574,7 @@ namespace Dictionary
             this._numberOfUsed = size;
             this._numberOfDeleted = 0;
 
-            this._nextGrowthThreshold = _capacity * 4 / tLoadFactor; 
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int NextPowerOf2(int v)
-        {
-            v--;
-            v |= v >> 1;
-            v |= v >> 2;
-            v |= v >> 4;
-            v |= v >> 8;
-            v |= v >> 16;
-            v++;
-
-            return v;
+            this._nextGrowthThreshold = _capacity * 4 / tLoadFactor;
         }
 
         public void CopyTo(KeyValuePair<TKey, TValue>[] array, int index)

@@ -25,11 +25,15 @@ namespace Dictionary
 
             int tries = 5;
 
+            Console.WriteLine("Structs: " + BenchmarkCreationOfArrayOfStructs());
+            Console.WriteLine("Arrays: " + BenchmarkCreationOfMultipleArrays());
+
+
             Console.WriteLine("Native: " + BenchmarkNativeDictionary(tuples, tries));
-            Console.WriteLine("Fast: " + BenchmarkFastDictionary(tuples, tries)); 
+            Console.WriteLine("Fast: " + BenchmarkFastDictionary(tuples, tries));
 
             Console.WriteLine("Native-String: " + BenchmarkNativeDictionaryString(tuplesString, tries));
-            Console.WriteLine("Fast-String: " + BenchmarkFastDictionaryString(tuplesString, tries)); 
+            Console.WriteLine("Fast-String: " + BenchmarkFastDictionaryString(tuplesString, tries));
 
             Console.WriteLine("Native-String-Out: " + BenchmarkNativeDictionaryStringOut(tuplesString, tries));
             Console.WriteLine("Fast-String-Out: " + BenchmarkFastDictionaryStringOut(tuplesString, tries));
@@ -168,6 +172,59 @@ namespace Dictionary
                 }
                     
             }
+            fast.Stop();
+            return fast.ElapsedMilliseconds;
+        }
+
+
+
+
+        public struct TryEntry<TKey, TValue>
+        {
+            public uint Hash;
+            public TKey Key;
+            public TValue Value;
+        }
+
+        private const int iterations = 4000;
+
+        public static long BenchmarkCreationOfArrayOfStructs()
+        {
+            var fast = Stopwatch.StartNew();
+
+            TryEntry<object, object>[] value;
+            for (int i = 1; i < iterations; i++)
+            {
+                value = new TryEntry<object, object>[iterations];
+
+                value[0].Hash = 18;
+                value[0].Key = new object();
+                value[0].Value = new object();
+            }
+
+            fast.Stop();
+            return fast.ElapsedMilliseconds;
+        }
+
+        public static long BenchmarkCreationOfMultipleArrays()
+        {
+            var fast = Stopwatch.StartNew();
+
+            uint[] hashes;
+            object[] keys;
+            object[] values;
+
+            for (int i = 1; i < iterations; i++)
+            {
+                hashes = new uint[iterations];
+                keys = new object[iterations];
+                values = new object[iterations];
+
+                hashes[0] = 18;
+                keys[0] = new object();
+                values[0] = new object();
+            }
+
             fast.Stop();
             return fast.ElapsedMilliseconds;
         }
