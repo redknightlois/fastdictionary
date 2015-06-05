@@ -1,7 +1,10 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -9,45 +12,12 @@ using System.Threading.Tasks;
 
 namespace Dictionary
 {
-    public unsafe class FastDictionary<TKey, TValue>
+    public class FastDictionary<TKey, TValue> : IEnumerable<KeyValuePair<TKey, TValue>>
     {
         const int InvalidNodePosition = -1;
-        const uint InvalidHash = 0;
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct Node
-        {
-            public static readonly uint kUnusedHash = 0xFFFFFFFF;
-            public static readonly uint kDeletedHash = 0xFFFFFFFE;
-
-            internal uint Hash;
-            internal TKey Key;
-            internal TValue Value;
-
-            public bool IsUnused
-            {
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                get { return Hash == kUnusedHash; }
-            }
-            public bool IsDeleted
-            {
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                get { return Hash == kDeletedHash; }
-            }
-            public bool IsOccupied
-            {
-                [MethodImpl(MethodImplOptions.AggressiveInlining)]
-                get { return Hash < kDeletedHash; }
-            }
-
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            public Node(uint hash, TKey key, TValue value)
-            {
-                Hash = hash;
-                Key = key;
-                Value = value;
-            }
-        }
+        public const uint kUnusedHash = 0xFFFFFFFF;
+        public const uint kDeletedHash = 0xFFFFFFFE;
 
         /// <summary>
         /// Minimum size we're willing to let hashtables be.
@@ -61,20 +31,17 @@ namespace Dictionary
         /// </summary>
         const int kInitialCapacity = 32;
 
-        /// <summary>
-        /// Node size calculated on generic type instantiation.
-        /// </summary>
-        static readonly int kNodeSize;
-
         // TLoadFactor4 - controls hash map load. 4 means 100% load, ie. hashmap will grow
         // when number of items == capacity. Default value of 6 means it grows when
         // number of items == capacity * 3/2 (6/4). Higher load == tighter maps, but bigger
         // risk of collisions.
         static int tLoadFactor4 = 5;
 
-        private Node[] _nodes;
+        private uint[] _hashes;
+        private TKey[] _keys;
+        private TValue[] _values;
+
         private int _capacity;
-        private uint _capacityMask;
 
         private int _size; // This is the real counter of how many items are in the hash-table (regardless of buckets)
         private int _numberOfUsed; // How many used buckets. 
@@ -82,16 +49,10 @@ namespace Dictionary
         private int _nextGrowthThreshold;
 
 
-        private IEqualityComparer<TKey> comparer;
+        private readonly IEqualityComparer<TKey> comparer;
         public IEqualityComparer<TKey> Comparer
         {
             get { return comparer; }
-        }
-
-
-        static FastDictionary()
-        {
-            kNodeSize = Marshal.SizeOf(default(Node));
         }
 
         public int Capacity
@@ -109,42 +70,95 @@ namespace Dictionary
             get { return Count == 0; }
         }
 
-        public int UsedMemory
+        public FastDictionary(int initialBucketCount, IEnumerable<KeyValuePair<TKey, TValue>> src, IEqualityComparer<TKey> comparer)
+            : this(initialBucketCount, comparer)
         {
-            get { return _capacity * kNodeSize; }
+            Contract.Ensures(_capacity >= initialBucketCount);
+
+            foreach (var item in src)
+                this[item.Key] = item.Value;
         }
 
-        private int NextPowerOf2(int v)
-        {
-            v--;
-            v |= v >> 1;
-            v |= v >> 2;
-            v |= v >> 4;
-            v |= v >> 8;
-            v |= v >> 16;
-            v++;
+        public FastDictionary(FastDictionary<TKey, TValue> src, IEqualityComparer<TKey> comparer)
+            : this(src.Capacity, src, comparer)
+        { }
 
-            return v;
+        public FastDictionary(int initialBucketCount, FastDictionary<TKey, TValue> src, IEqualityComparer<TKey> comparer)
+        {
+            Contract.Ensures(_capacity >= initialBucketCount);
+            Contract.Ensures(_capacity >= src._capacity);
+
+            this.comparer = comparer ?? EqualityComparer<TKey>.Default;
+
+            _capacity = Math.Max(src._capacity, initialBucketCount);
+            _size = src._size;
+            _numberOfUsed = src._numberOfUsed;
+            _numberOfDeleted = src._numberOfDeleted;
+            _nextGrowthThreshold = src._nextGrowthThreshold;
+
+            int newCapacity = _capacity;
+
+            if (comparer == src.comparer)
+            {
+                // Initialization through copy (very efficient) because the comparer is the same.
+                _keys = new TKey[newCapacity];
+                _values = new TValue[newCapacity];
+                _hashes = new uint[newCapacity];
+
+                Array.Copy(src._keys, _keys, newCapacity);
+                Array.Copy(src._values, _values, newCapacity);
+                Array.Copy(src._hashes, _hashes, newCapacity);
+            }
+            else
+            {
+                // Initialization through rehashing because the comparer is not the same.
+                var keys = new TKey[newCapacity];
+                var values = new TValue[newCapacity];
+                var hashes = new uint[newCapacity];
+
+                // BlockCopyMemoryHelper.Memset( hashes, 0, newCapacity, kUnusedHash);
+
+                for (int i = 0; i < newCapacity; i++)
+                    hashes[i] = kUnusedHash;
+
+                _keys = src._keys;
+                _values = src._values;
+                _hashes = src._hashes;
+
+                Rehash(keys, values, hashes);
+            }
         }
 
-        public FastDictionary(int initialBucketCount = kInitialCapacity)
+        public FastDictionary(IEqualityComparer<TKey> comparer)
+            : this(kInitialCapacity, comparer)
+        { }
+
+        public FastDictionary(int initialBucketCount, IEqualityComparer<TKey> comparer)
         {
-            // Contract.Ensures(_capacity >= initialBucketCount);
+            Contract.Ensures(_capacity >= initialBucketCount);
 
             this.comparer = comparer ?? EqualityComparer<TKey>.Default;
 
             int newCapacity = NextPowerOf2(initialBucketCount >= kMinBuckets ? initialBucketCount : kMinBuckets);
 
-            _nodes = new Node[newCapacity];
+            // Initialization
+            _keys = new TKey[newCapacity];
+            _values = new TValue[newCapacity];
+            _hashes = new uint[newCapacity];
             for (int i = 0; i < newCapacity; i++)
-                _nodes[i].Hash = Node.kUnusedHash;
+                _hashes[i] = kUnusedHash;
 
             _capacity = newCapacity;
-            _capacityMask = (uint)(newCapacity - 1);
+
             _numberOfUsed = _size;
             _numberOfDeleted = 0;
+
             _nextGrowthThreshold = _capacity * 4 / tLoadFactor4;
         }
+
+        public FastDictionary(int initialBucketCount = kInitialCapacity)
+            : this(initialBucketCount, EqualityComparer<TKey>.Default)
+        { }
 
         public void Add(TKey key, TValue value)
         {
@@ -154,23 +168,23 @@ namespace Dictionary
 
             ResizeIfNeeded();
 
-            uint hash = GetInternalHashCode(key);
-            uint bucket = hash & _capacityMask;
+            int hash = GetInternalHashCode(key);
+            int bucket = hash % _capacity;
 
-            if (TryAdd(ref _nodes[bucket], hash, key, value))
+            if (TryAdd(bucket, (uint)hash, key, value))
                 return;
 
             Contract.Assert(_numberOfUsed < _capacity);
 
-            uint numProbes = 0;
+            int numProbes = 1;
             bool couldInsert = false;
             while (!couldInsert)
-            {
+            {               
+                bucket = (bucket + numProbes) % _capacity;
+
+                couldInsert = TryAdd(bucket, (uint)hash, key, value);
+
                 numProbes++;
-
-                bucket = (bucket + numProbes) & _capacityMask;
-
-                couldInsert = TryAdd(ref _nodes[bucket], hash, key, value);
             }
         }
 
@@ -184,21 +198,21 @@ namespace Dictionary
             if (bucket == InvalidNodePosition)
                 return false;
 
-            SetDeleted(ref _nodes[bucket]);
+            SetDeleted(bucket);
 
             return true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void SetDeleted(ref Node node)
+        private void SetDeleted(int node)
         {
-            Contract.Ensures(node.IsDeleted);
+            Contract.Ensures(_hashes[node] == kDeletedHash);
             Contract.Ensures(_size <= Contract.OldValue<int>(_size));
             Contract.Ensures(_numberOfDeleted >= Contract.OldValue<int>(_numberOfDeleted));
 
-            if (node.Hash != Node.kDeletedHash)
+            if (_hashes[node] != kDeletedHash)
             {
-                SetNode(ref node, Node.kDeletedHash, default(TKey), default(TValue));
+                SetNode(node, kDeletedHash, default(TKey), default(TValue));
 
                 _numberOfDeleted++;
                 _size--;
@@ -230,25 +244,29 @@ namespace Dictionary
             if (newCapacity < kMinBuckets)
                 newCapacity = kMinBuckets;
 
-            var newNodes = new Node[newCapacity];
+            var keys = new TKey[newCapacity];
+            var values = new TValue[newCapacity];
+            var hashes = new uint[newCapacity];
             for (int i = 0; i < newCapacity; i++)
-                newNodes[i].Hash = Node.kUnusedHash;
+                hashes[i] = kUnusedHash;
 
-            Rehash(ref newNodes, _capacity, _nodes);
+            Rehash(keys, values, hashes);
 
             _capacity = newCapacity;
-            _capacityMask = (uint)(newCapacity - 1);
-            _nodes = newNodes;
+            _hashes = hashes;
+            _keys = keys;
+            _values = values;
+
             _numberOfUsed = _size;
             _numberOfDeleted = 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void SetNode(ref Node node, uint hash, TKey key, TValue value)
+        private void SetNode(int node, uint hash, TKey key, TValue value)
         {
-            node.Hash = hash;
-            node.Key = key;
-            node.Value = value;
+            _hashes[node] = hash;
+            _keys[node] = key;
+            _values[node] = value;
         }
 
         public TValue this[TKey key]
@@ -256,63 +274,87 @@ namespace Dictionary
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
-                // Contract.Requires(key != null);
+                Contract.Requires(key != null);
 
-                int i = Lookup(key);
-                if (i == InvalidNodePosition)
-                    throw new KeyNotFoundException();
+                int hash = GetInternalHashCode(key);
+                int bucket = hash % _capacity;
 
-                return _nodes[i].Value;
+                var hashes = _hashes;
+                var keys = _keys;
+                var values = _values;
+
+                var nKeys = keys[bucket];
+                if (CompareKey(hashes[bucket], nKeys, (uint)hash, key))
+                    return values[bucket];
+
+                int numProbes = 1; // how many times we've probed
+                Contract.Assert(_numberOfUsed < _capacity);
+
+                bool canContinue = true;
+                while (canContinue)
+                {
+                    bucket = (bucket + numProbes) % _capacity;
+
+                    nKeys = keys[bucket];
+                    if (CompareKey(hashes[bucket], nKeys, (uint)hash, key, ref canContinue))
+                        return values[bucket];
+
+                    numProbes++;
+                }
+
+                throw new KeyNotFoundException();
             }
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             set
             {
-                // Contract.Requires(key != null);                
+                Contract.Requires(key != null);
 
                 ResizeIfNeeded();
 
-                uint hash = GetInternalHashCode(key);
-                uint bucket = hash & _capacityMask;
+                int hash = GetInternalHashCode(key);
+                int bucket = hash % _capacity;
 
-                if (TryInsert(ref _nodes[bucket], hash, key, value))
+                if (TryInsert(bucket, (uint)hash, key, value))
                     return;
 
                 Contract.Assert(_numberOfUsed < _capacity);
 
-                uint numProbes = 0;
+                int numProbes = 1;
                 bool couldInsert = false;
                 while (!couldInsert)
                 {
+                    bucket = (bucket + numProbes) % _capacity;
+
+                    couldInsert = TryInsert(bucket, (uint)hash, key, value);
+
                     numProbes++;
-
-                    bucket = (bucket + numProbes) & _capacityMask;
-
-                    couldInsert = TryInsert(ref _nodes[bucket], hash, key, value);
                 }
             }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool TryAdd(ref Node node, uint hash, TKey key, TValue value)
+        private bool TryAdd(int node, uint hash, TKey key, TValue value)
         {
-            if (node.IsDeleted)
+            var nHash = _hashes[node];
+            if (nHash == kDeletedHash)
             {
-                SetNode(ref node, hash, key, value);
+                SetNode(node, hash, key, value);
 
                 _numberOfDeleted--;
                 _size++;
 
                 return true;
             }
-            else if (node.IsUnused)
+            else if (nHash == kUnusedHash)
             {
-                SetNode(ref node, hash, key, value);
+                SetNode(node, hash, key, value);
 
                 _numberOfUsed++;
                 _size++;
 
                 return true;
             }
-            else if (CompareKey(ref node, key, hash))
+            else if (CompareKey(nHash, _keys[node], hash, key))
             {
                 throw new ArgumentException("Cannot add duplicated key.", "key");
             }
@@ -321,60 +363,62 @@ namespace Dictionary
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool TryInsert(ref Node node, uint hash, TKey key, TValue value)
+        private bool TryInsert(int node, uint hash, TKey key, TValue value)
         {
-            if (node.IsDeleted)
+            uint nHash = _hashes[node];
+            if (nHash == kUnusedHash)
             {
-                SetNode(ref node, hash, key, value);
-
-                _numberOfDeleted--;
-                _size++;
-
-                return true;
-            }
-            else if (node.IsUnused)
-            {
-                SetNode(ref node, hash, key, value);
-
                 _numberOfUsed++;
                 _size++;
 
-                return true;
+                goto SET;
             }
-            else if (CompareKey(ref node, key, hash))
+            else if (nHash == kDeletedHash)
             {
-                SetNode(ref node, hash, key, value);
+                _numberOfDeleted--;
+                _size++;
 
-                return true;
+                goto SET;
             }
-
+            else if (CompareKey(nHash, _keys[node], hash, key))
+            {
+                goto SET;
+            }
             return false;
+
+        SET:
+            SetNode(node, hash, key, value);
+            return true;
         }
 
 
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void UpdateNode(ref Node node, uint hash, TKey key, TValue value)
+        private void UpdateNode(int node, uint hash, TKey key, TValue value)
         {
-            if (node.IsDeleted)
+            uint nHash = _hashes[node];
+            if (nHash == kDeletedHash)
             {
                 _numberOfDeleted--;
                 _size++;
             }
-            else if (node.IsUnused)
+            else if (nHash == kUnusedHash)
             {
                 _numberOfUsed++;
                 _size++;
             }
 
-            SetNode(ref node, hash, key, value);
+            SetNode(node, hash, key, value);
         }
 
         public void Clear()
         {
+            TKey defaultKey = default(TKey);
+            TValue defaultValue = default(TValue);
+
             for (int i = 0; i < _capacity; i++)
             {
-                SetNode(ref _nodes[i], Node.kUnusedHash, default(TKey), default(TValue));
+                SetNode(i, kUnusedHash, defaultKey, defaultValue);
             }
 
             _numberOfUsed = 0;
@@ -407,21 +451,90 @@ namespace Dictionary
             Contract.Requires(newCapacity >= _capacity);
             Contract.Ensures((_capacity & (_capacity - 1)) == 0);
 
-            newCapacity = NextPowerOf2(newCapacity);
-
-            var newNodes = new Node[newCapacity];
+            var keys = new TKey[newCapacity];
+            var values = new TValue[newCapacity];
+            var hashes = new uint[newCapacity];
             for (int i = 0; i < newCapacity; i++)
-                newNodes[i].Hash = Node.kUnusedHash;
+                hashes[i] = kUnusedHash;
 
-            Rehash(ref newNodes, _capacity, _nodes);
+            Rehash(keys, values, hashes);
 
             _capacity = newCapacity;
-            _capacityMask = (uint)(newCapacity - 1);
-            _nodes = newNodes;
+
+            _keys = keys;
+            _values = values;
+            _hashes = hashes;
+
             _numberOfUsed = _size;
             _numberOfDeleted = 0;
+
             _nextGrowthThreshold = _capacity * 4 / tLoadFactor4;
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool TryGetValue(TKey key, out TValue value)
+        {
+            int hash = GetInternalHashCode(key);
+            int bucket = hash % _capacity;
+
+            var hashes = _hashes;
+            var keys = _keys;
+
+            var nKey = keys[bucket];
+            if (CompareKey(hashes[bucket], nKey, (uint)hash, key))
+            {
+                value = _values[bucket];
+                return true;
+            }
+
+            uint numProbes = 1; // how many times we've probed
+            Contract.Assert(_numberOfUsed < _capacity);
+
+            bool canContinue = true;
+            while (canContinue)
+            {
+                bucket = (int)((bucket + numProbes) % _capacity);
+
+                nKey = keys[bucket];
+                if (CompareKey(hashes[bucket], nKey, (uint)hash, key, ref canContinue))
+                {
+                    value = _values[bucket];
+                    return true;
+                }
+
+                numProbes++;
+            }
+
+            value = default(TValue);
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool CompareKey(uint nHash, TKey nKey, uint hash, TKey key, ref bool probeAgain)
+        {
+            probeAgain = nHash != kUnusedHash;
+            if (nHash != hash)
+                return false;
+
+            if (comparer.Equals(nKey, key))
+                return true;
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool CompareKey(uint nHash, TKey nKey, uint hash, TKey key)
+        {
+            if (nHash != hash)
+                return false;
+
+            if (comparer.Equals(nKey, key))
+                return true;
+
+            return false;
+        }
+
 
         /// <summary>
         /// 
@@ -431,227 +544,490 @@ namespace Dictionary
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int Lookup(TKey key)
         {
-            uint hash = GetInternalHashCode(key);
-            uint bucket = hash & _capacityMask;
+            int hash = comparer.GetHashCode(key) & 0x7FFFFFFF;
+            int bucket = hash % _capacity;
 
-            Node n = _nodes[bucket];
-            if (CompareKey(ref _nodes[bucket], key, hash))
-                return (int)bucket;
+            var hashes = _hashes;
+            var keys = _keys;
 
-            uint numProbes = 0; // how many times we've probed
+            if (CompareKey(hashes[bucket], keys[bucket], (uint)hash, key))
+                return bucket;
 
+
+            uint numProbes = 1; // how many times we've probed
             Contract.Assert(_numberOfUsed < _capacity);
-            while (!_nodes[bucket].IsUnused)
-            {
-                numProbes++;
 
-                bucket = (bucket + numProbes) & _capacityMask;
-                if (CompareKey(ref _nodes[bucket], key, hash))
-                    return (int)bucket;
+            bool canContinue = true;
+            while (canContinue)
+            {
+                bucket = (int)((bucket + numProbes) % _capacity);
+
+                if (CompareKey(hashes[bucket], keys[bucket], (uint)hash, key, ref canContinue))
+                    return bucket;
+
+                numProbes++;
             }
 
             return InvalidNodePosition;
         }
 
-
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int FindForInsert(TKey key, out uint hash)
+        private int GetInternalHashCode(TKey key)
         {
-            hash = GetInternalHashCode(key);
+            return comparer.GetHashCode(key) & 0x7FFFFFFF;
+        }
 
-            uint bucket = hash & _capacityMask;
-            if (CompareKey(ref _nodes[bucket], key, hash))
-                return (int)bucket;
+        private void Rehash(TKey[] keys, TValue[] values, uint[] hashes)
+        {
+            uint capacity = (uint)keys.Length;
 
-            int freeNode = InvalidNodePosition;
-
-            Node n = _nodes[bucket];
-            if (n.IsDeleted)
-                freeNode = (int)bucket;
-
-            uint numProbes = 0;
-            Contract.Assert(_numberOfUsed < _capacity);
-
-            while (!n.IsUnused)
+            for (int it = 0; it < _hashes.Length; it++)
             {
-                numProbes++;
-
-                bucket = (bucket + numProbes) & _capacityMask;
-
-                if (CompareKey(ref _nodes[bucket], key, hash))
-                    return (int)bucket;
-
-                n = _nodes[bucket];
-                if (n.IsDeleted && freeNode == InvalidNodePosition)
-                    freeNode = (int)bucket;
-            }
-
-            return freeNode != InvalidNodePosition ? freeNode : (int)bucket;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private uint GetInternalHashCode(TKey key)
-        {
-            return (uint)(comparer.GetHashCode(key));
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool CompareKey(ref Node n, TKey key, uint hash)
-        {
-            if (n.Hash != hash)
-                return false;
-
-            return comparer.Equals(n.Key, key);
-        }
-
-        private static void Rehash(ref Node[] newNodes, int capacity, Node[] nodes)
-        {
-            uint mask = (uint)newNodes.Length - 1;
-            for (int it = 0; it < nodes.Length; it++)
-            {
-                var hash = nodes[it].Hash;
-                uint bucket = hash & mask;
+                uint hash = _hashes[it];
+                uint bucket = hash % capacity;
 
                 uint numProbes = 0;
-                while (!newNodes[bucket].IsUnused)
+                while (!(hashes[bucket] == kUnusedHash))
                 {
                     numProbes++;
-                    bucket = (bucket + numProbes) & mask;
+                    bucket = (bucket + numProbes) % capacity;
                 }
 
-                newNodes[bucket] = nodes[it];
+                hashes[bucket] = hash;
+                keys[bucket] = _keys[it];
+                values[bucket] = _values[it];
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private int NextPowerOf2(int v)
+        {
+            v--;
+            v |= v >> 1;
+            v |= v >> 2;
+            v |= v >> 4;
+            v |= v >> 8;
+            v |= v >> 16;
+            v++;
+
+            return v;
+        }
+
+        public void CopyTo(KeyValuePair<TKey, TValue>[] array, int index)
+        {
+            if (array == null)
+                throw new ArgumentNullException("The array cannot be null", "array");
+
+            if (array.Rank != 1)
+                throw new ArgumentException("Multiple dimensions array are not supporter", "array");
+
+            if (index < 0 || index > array.Length)
+                throw new ArgumentOutOfRangeException("index");
+
+            if (array.Length - index < Count)
+                throw new ArgumentException("The array plus the offset is too small.");
+
+            int count = _capacity;
+
+            var hashes = _hashes;
+            var keys = _keys;
+            var values = _values;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (hashes[i] < kDeletedHash)
+                    array[index++] = new KeyValuePair<TKey, TValue>(keys[i], values[i]);
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return new Enumerator(this);
+        }
+
+        public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
+        {
+            return new Enumerator(this);
+        }
+
+
+        [Serializable]
+        public struct Enumerator : IEnumerator<KeyValuePair<TKey, TValue>>
+        {
+            private FastDictionary<TKey, TValue> dictionary;
+            private int index;
+            private KeyValuePair<TKey, TValue> current;
+
+            internal const int DictEntry = 1;
+            internal const int KeyValuePair = 2;
+
+            internal Enumerator(FastDictionary<TKey, TValue> dictionary)
+            {
+                this.dictionary = dictionary;
+                index = 0;
+                current = new KeyValuePair<TKey, TValue>();
+            }
+
+            public bool MoveNext()
+            {
+                var dict = dictionary;
+
+                // Use unsigned comparison since we set index to dictionary.count+1 when the enumeration ends.
+                // dictionary.count+1 could be negative if dictionary.count is Int32.MaxValue
+                while (index < dict._capacity)
+                {
+                    if (dict._hashes[index] < kDeletedHash)
+                    {
+                        current = new KeyValuePair<TKey, TValue>(dict._keys[index], dict._values[index]);
+                        index++;
+                        return true;
+                    }
+                    index++;
+                }
+
+                index = dictionary._capacity + 1;
+                current = new KeyValuePair<TKey, TValue>();
+                return false;
+            }
+
+            public KeyValuePair<TKey, TValue> Current
+            {
+                get { return current; }
+            }
+
+            public void Dispose()
+            {
+            }
+
+            object IEnumerator.Current
+            {
+                get
+                {
+                    if (index == 0 || (index == dictionary._capacity + 1))
+                        throw new InvalidOperationException("Can't happen.");
+
+                    return new KeyValuePair<TKey, TValue>(current.Key, current.Value);
+                }
+            }
+
+            void IEnumerator.Reset()
+            {
+                index = 0;
+                current = new KeyValuePair<TKey, TValue>();
+            }
+        }
+
+        public KeyCollection Keys
+        {
+            get { return new KeyCollection(this); }
+        }
+
+        public ValueCollection Values
+        {
+            get { return new ValueCollection(this); }
+        }
+
+        public bool ContainsKey(TKey key)
+        {
+            return Contains(key);
+        }
+
+        public bool ContainsValue(TValue value)
+        {
+            var hashes = _hashes;
+            var values = _values;
+            int count = _capacity;
+
+            if (value == null)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (hashes[i] < kDeletedHash && values[i] == null)
+                        return true;
+                }
+            }
+            else
+            {
+                EqualityComparer<TValue> c = EqualityComparer<TValue>.Default;
+                for (int i = 0; i < count; i++)
+                {
+                    if (hashes[i] < kDeletedHash && c.Equals(values[i], value))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+
+        public sealed class KeyCollection : IEnumerable<TKey>, IEnumerable
+        {
+            private FastDictionary<TKey, TValue> dictionary;
+
+            public KeyCollection(FastDictionary<TKey, TValue> dictionary)
+            {
+                Contract.Requires(dictionary != null);
+
+                this.dictionary = dictionary;
+            }
+
+            public Enumerator GetEnumerator()
+            {
+                return new Enumerator(dictionary);
+            }
+
+            public void CopyTo(TKey[] array, int index)
+            {
+                if (array == null)
+                    throw new ArgumentNullException("The array cannot be null", "array");
+
+                if (index < 0 || index > array.Length)
+                    throw new ArgumentOutOfRangeException("index");
+
+                if (array.Length - index < dictionary.Count)
+                    throw new ArgumentException("The array plus the offset is too small.");
+
+                int count = dictionary._capacity;
+
+                var hashes = dictionary._hashes;
+                var keys = dictionary._keys;
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (hashes[i] < kDeletedHash)
+                        array[index++] = keys[i];
+                }
+            }
+
+            public int Count
+            {
+                get { return dictionary.Count; }
+            }
+
+
+            IEnumerator<TKey> IEnumerable<TKey>.GetEnumerator()
+            {
+                return new Enumerator(dictionary);
+            }
+
+            IEnumerator IEnumerable.GetEnumerator()
+            {
+                return new Enumerator(dictionary);
+            }
+
+
+            [Serializable]
+            public struct Enumerator : IEnumerator<TKey>, IEnumerator
+            {
+                private FastDictionary<TKey, TValue> dictionary;
+                private int index;
+                private TKey currentKey;
+
+                internal Enumerator(FastDictionary<TKey, TValue> dictionary)
+                {
+                    this.dictionary = dictionary;
+                    index = 0;
+                    currentKey = default(TKey);
+                }
+
+                public void Dispose()
+                {
+                }
+
+                public bool MoveNext()
+                {
+                    var count = dictionary.Count;
+
+                    var hashes = dictionary._hashes;
+                    var keys = dictionary._keys;
+                    while (index < count)
+                    {
+                        if (hashes[index] < kDeletedHash)
+                        {
+                            currentKey = keys[index];
+                            index++;
+                            return true;
+                        }
+                        index++;
+                    }
+
+                    index = count + 1;
+                    currentKey = default(TKey);
+                    return false;
+                }
+
+                public TKey Current
+                {
+                    get
+                    {
+                        return currentKey;
+                    }
+                }
+
+                Object System.Collections.IEnumerator.Current
+                {
+                    get
+                    {
+                        if (index == 0 || (index == dictionary.Count + 1))
+                            throw new InvalidOperationException("Cant happen.");
+
+                        return currentKey;
+                    }
+                }
+
+                void System.Collections.IEnumerator.Reset()
+                {
+                    index = 0;
+                    currentKey = default(TKey);
+                }
+            }
+        }
+
+
+
+        public sealed class ValueCollection : IEnumerable<TValue>, IEnumerable
+        {
+            private FastDictionary<TKey, TValue> dictionary;
+
+            public ValueCollection(FastDictionary<TKey, TValue> dictionary)
+            {
+                Contract.Requires(dictionary != null);
+
+                this.dictionary = dictionary;
+            }
+
+            public Enumerator GetEnumerator()
+            {
+                return new Enumerator(dictionary);
+            }
+
+            public void CopyTo(TValue[] array, int index)
+            {
+                if (array == null)
+                    throw new ArgumentNullException("The array cannot be null", "array");
+
+                if (index < 0 || index > array.Length)
+                    throw new ArgumentOutOfRangeException("index");
+
+                if (array.Length - index < dictionary.Count)
+                    throw new ArgumentException("The array plus the offset is too small.");
+
+                int count = dictionary._capacity;
+
+                var hashes = dictionary._hashes;
+                var values = dictionary._values;
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (hashes[i] < kDeletedHash)
+                        array[index++] = values[i];
+                }
+            }
+
+            public int Count
+            {
+                get { return dictionary.Count; }
+            }
+
+            IEnumerator<TValue> IEnumerable<TValue>.GetEnumerator()
+            {
+                return new Enumerator(dictionary);
+            }
+
+            IEnumerator IEnumerable.GetEnumerator()
+            {
+                return new Enumerator(dictionary);
+            }
+
+
+            [Serializable]
+            public struct Enumerator : IEnumerator<TValue>, IEnumerator
+            {
+                private FastDictionary<TKey, TValue> dictionary;
+                private int index;
+                private TValue currentValue;
+
+                internal Enumerator(FastDictionary<TKey, TValue> dictionary)
+                {
+                    this.dictionary = dictionary;
+                    index = 0;
+                    currentValue = default(TValue);
+                }
+
+                public void Dispose()
+                {
+                }
+
+                public bool MoveNext()
+                {
+                    var count = dictionary.Count;
+
+                    var hashes = dictionary._hashes;
+                    var values = dictionary._values;
+                    while (index < count)
+                    {
+                        if (hashes[index] < kDeletedHash)
+                        {
+                            currentValue = values[index];
+                            index++;
+                            return true;
+                        }
+                        index++;
+                    }
+
+                    index = count + 1;
+                    currentValue = default(TValue);
+                    return false;
+                }
+
+                public TValue Current
+                {
+                    get
+                    {
+                        return currentValue;
+                    }
+                }
+                Object IEnumerator.Current
+                {
+                    get
+                    {
+                        if (index == 0 || (index == dictionary.Count + 1))
+                            throw new InvalidOperationException("Cant happen.");
+
+                        return currentValue;
+                    }
+                }
+
+                void IEnumerator.Reset()
+                {
+                    index = 0;
+                    currentValue = default(TValue);
+                }
+            }
+        }
+
+
+        private class BlockCopyMemoryHelper
+        {
+            public static void Memset(uint[] array, int start, int count, uint value)
+            {
+                int block = 64, index = 0;
+                int length = Math.Min(block, array.Length);
+
+                //Fill the initial array
+                while (index < length)
+                {
+                    array[index++] = value;
+                }
+
+                length = array.Length;
+                while (index < length)
+                {
+                    Buffer.BlockCopy(array, 0, array, index, Math.Min(block, length - index));
+                    index += block;
+
+                    block *= 2;
+                }
             }
         }
     }
-
-
-    //public unsafe static class Hashing
-    //{
-    //    /// <summary>
-    //    /// A port of the original XXHash algorithm from Google in 32bits 
-    //    /// </summary>
-    //    /// <<remarks>The 32bits and 64bits hashes for the same data are different. In short those are 2 entirely different algorithms</remarks>
-    //    public static class XXHash32
-    //    {
-    //        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    //        public static unsafe uint CalculateInline(byte* buffer, int len, uint seed = 0)
-    //        {
-    //            unchecked
-    //            {
-    //                uint h32;
-
-    //                byte* bEnd = buffer + len;
-
-    //                if (len >= 16)
-    //                {
-    //                    byte* limit = bEnd - 16;
-
-    //                    uint v1 = seed + PRIME32_1 + PRIME32_2;
-    //                    uint v2 = seed + PRIME32_2;
-    //                    uint v3 = seed + 0;
-    //                    uint v4 = seed - PRIME32_1;
-
-    //                    do
-    //                    {
-    //                        v1 += *((uint*)buffer) * PRIME32_2;
-    //                        buffer += sizeof(uint);
-    //                        v2 += *((uint*)buffer) * PRIME32_2;
-    //                        buffer += sizeof(uint);
-    //                        v3 += *((uint*)buffer) * PRIME32_2;
-    //                        buffer += sizeof(uint);
-    //                        v4 += *((uint*)buffer) * PRIME32_2;
-    //                        buffer += sizeof(uint);
-
-    //                        v1 = RotateLeft32(v1, 13);
-    //                        v2 = RotateLeft32(v2, 13);
-    //                        v3 = RotateLeft32(v3, 13);
-    //                        v4 = RotateLeft32(v4, 13);
-
-    //                        v1 *= PRIME32_1;
-    //                        v2 *= PRIME32_1;
-    //                        v3 *= PRIME32_1;
-    //                        v4 *= PRIME32_1;
-    //                    }
-    //                    while (buffer <= limit);
-
-    //                    h32 = RotateLeft32(v1, 1) + RotateLeft32(v2, 7) + RotateLeft32(v3, 12) + RotateLeft32(v4, 18);
-    //                }
-    //                else
-    //                {
-    //                    h32 = seed + PRIME32_5;
-    //                }
-
-    //                h32 += (uint)len;
-
-
-    //                while (buffer + 4 <= bEnd)
-    //                {
-    //                    h32 += *((uint*)buffer) * PRIME32_3;
-    //                    h32 = RotateLeft32(h32, 17) * PRIME32_4;
-    //                    buffer += 4;
-    //                }
-
-    //                while (buffer < bEnd)
-    //                {
-    //                    h32 += (uint)(*buffer) * PRIME32_5;
-    //                    h32 = RotateLeft32(h32, 11) * PRIME32_1;
-    //                    buffer++;
-    //                }
-
-    //                h32 ^= h32 >> 15;
-    //                h32 *= PRIME32_2;
-    //                h32 ^= h32 >> 13;
-    //                h32 *= PRIME32_3;
-    //                h32 ^= h32 >> 16;
-
-    //                return h32;
-    //            }
-    //        }
-
-    //        public static unsafe uint Calculate(byte* buffer, int len, uint seed = 0)
-    //        {
-    //            return CalculateInline(buffer, len, seed);
-    //        }
-
-    //        public static uint Calculate(string value, Encoding encoder, uint seed = 0)
-    //        {
-    //            var buf = encoder.GetBytes(value);
-
-    //            fixed (byte* buffer = buf)
-    //            {
-    //                return CalculateInline(buffer, buf.Length, seed);
-    //            }
-    //        }
-    //        public static uint CalculateRaw(string buf, uint seed = 0)
-    //        {
-    //            fixed (char* buffer = buf)
-    //            {
-    //                return CalculateInline((byte*)buffer, buf.Length * sizeof(char), seed);
-    //            }
-    //        }
-
-    //        public static uint Calculate(byte[] buf, int len = -1, uint seed = 0)
-    //        {
-    //            if (len == -1)
-    //                len = buf.Length;
-
-    //            fixed (byte* buffer = buf)
-    //            {
-    //                return CalculateInline(buffer, len, seed);
-    //            }
-    //        }
-
-    //        private static uint PRIME32_1 = 2654435761U;
-    //        private static uint PRIME32_2 = 2246822519U;
-    //        private static uint PRIME32_3 = 3266489917U;
-    //        private static uint PRIME32_4 = 668265263U;
-    //        private static uint PRIME32_5 = 374761393U;
-
-    //        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    //        private static uint RotateLeft32(uint value, int count)
-    //        {
-    //            return (value << count) | (value >> (32 - count));
-    //        }
-    //    }
-    //}
 }

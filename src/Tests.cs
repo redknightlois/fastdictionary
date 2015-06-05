@@ -9,12 +9,15 @@ namespace Dictionary
 {
     public class Tests
     {
-
-
         [Fact]
         public void Construction()
         {
             var dict = new FastDictionary<int, int>();
+            Assert.Equal(0, dict.Count);
+            Assert.Equal(32, dict.Capacity);
+            Assert.NotNull(dict.Comparer);
+
+            dict = new FastDictionary<int, int>(null);
             Assert.Equal(0, dict.Count);
             Assert.Equal(32, dict.Capacity);
             Assert.NotNull(dict.Comparer);
@@ -50,6 +53,86 @@ namespace Dictionary
         }
 
         [Fact]
+        public void ConstructionWithFastDictionary()
+        {
+            var dict = new FastDictionary<int, int>(200, EqualityComparer<int>.Default);
+            for (int i = 0; i < 100; i++)
+                dict[i] = i;
+
+            var fromFastDictionary = new FastDictionary<int, int>(dict.Capacity, dict, EqualityComparer<int>.Default);
+            Assert.Equal(dict.Count, fromFastDictionary.Count);
+            Assert.Equal(dict.Capacity, fromFastDictionary.Capacity);
+            Assert.Equal(dict.Comparer, fromFastDictionary.Comparer);
+
+            int count = 0;
+            foreach (var item in fromFastDictionary)
+            {
+                Assert.Equal(item.Key, item.Value);
+                count++;
+            }
+            Assert.Equal(100, count);
+        }
+
+        private class CustomIntEqualityComparer : EqualityComparer<int>
+        {
+            public override bool Equals(int x, int y)
+            {
+                return x == y;
+            }
+
+            public override int GetHashCode(int obj)
+            {
+                return obj;
+            }
+        }
+
+        [Fact]
+        public void ConstructionWithFastDictionaryAndDifferentComparer()
+        {
+            var equalityComparer = new CustomIntEqualityComparer();
+
+            var dict = new FastDictionary<int, int>(200, equalityComparer);
+            for (int i = 0; i < 100; i++)
+                dict[i] = i;
+
+            var fromFastDictionary = new FastDictionary<int, int>(dict, EqualityComparer<int>.Default);
+            Assert.Equal(dict.Count, fromFastDictionary.Count);
+            Assert.Equal(dict.Capacity, fromFastDictionary.Capacity);
+            Assert.NotSame(dict.Comparer, fromFastDictionary.Comparer);
+
+            int count = 0;
+            foreach (var item in fromFastDictionary)
+            {
+                Assert.Equal(item.Key, item.Value);
+                count++;
+            }
+            Assert.Equal(100, count);
+        }
+
+
+        [Fact]
+        public void ConstructionWithNativeDictionary()
+        {
+            var dict = new Dictionary<int, int>(200, EqualityComparer<int>.Default);
+            for (int i = 0; i < 100; i++)
+                dict[i] = i;
+
+            var fromFastDictionary = new FastDictionary<int, int>(dict.Count, dict, EqualityComparer<int>.Default);
+            Assert.Equal(dict.Count, fromFastDictionary.Count);
+            Assert.Equal(dict.Comparer, fromFastDictionary.Comparer);
+
+            int count = 0;
+            foreach (var item in fromFastDictionary)
+            {
+                Assert.Equal(item.Key, item.Value);
+                count++;
+            }
+            Assert.Equal(100, count);
+        }
+
+
+
+        [Fact]
         public void ConsecutiveInsertionsWithIndexerAndWithoutGrow()
         {
             var dict = new FastDictionary<int, int>(200);
@@ -63,9 +146,18 @@ namespace Dictionary
                 Assert.Equal(i, dict[i]);
             }
 
+            int count = 0;
+            foreach (var item in dict)
+            {
+                Assert.Equal(item.Key, item.Value);
+                count++;
+            }
+            Assert.Equal(100, count);
+
             Assert.Equal(100, dict.Count);
             Assert.Equal(256, dict.Capacity);
         }
+
 
         [Fact]
         public void ConsecutiveInsertionsWithIndexerAndGrow()
@@ -80,6 +172,15 @@ namespace Dictionary
                 Assert.True(dict.Contains(i));
                 Assert.Equal(i, dict[i]);
             }
+
+            int count = 0;
+            foreach (var item in dict)
+            {
+                Assert.Equal(item.Key, item.Value);
+                count++;
+            }
+            Assert.Equal(100, count);
+
 
             Assert.Equal(100, dict.Count);
             Assert.Equal(128, dict.Capacity);
@@ -98,6 +199,14 @@ namespace Dictionary
                 Assert.True(dict.Contains(i));
                 Assert.Equal(i, dict[i]);
             }
+
+            int count = 0;
+            foreach (var item in dict)
+            {
+                Assert.Equal(item.Key, item.Value);
+                count++;
+            }
+            Assert.Equal(100, count);
 
             Assert.Equal(100, dict.Count);
             Assert.Equal(256, dict.Capacity);
@@ -289,6 +398,39 @@ namespace Dictionary
                 else
                     Assert.False(dict.Contains(i));
             }
+        }
+
+        [Fact]
+        public void KeysArePresent()
+        {
+            var dict = new FastDictionary<int, int>(4);
+            for (int i = 0; i < 100; i++)
+                dict[i] = i;
+
+            int count = 0;
+            foreach (var key in dict.Keys.ToList())
+            {
+                Assert.True(dict.ContainsKey(key));
+                Assert.Equal(key, dict[key]);
+                count++;
+            }
+            Assert.Equal(100, count);
+        }
+
+        [Fact]
+        public void ValuesArePresent()
+        {
+            var dict = new FastDictionary<int, int>(4);
+            for (int i = 0; i < 100; i++)
+                dict[i] = i;
+
+            int count = 0;
+            foreach (var value in dict.Values.ToList())
+            {
+                Assert.True(dict.ContainsValue(value));
+                count++;
+            }
+            Assert.Equal(100, count);
         }
     }
 }
