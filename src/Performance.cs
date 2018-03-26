@@ -33,14 +33,16 @@ namespace Dictionary
 
             tries = 5;
 
-            Console.WriteLine("Native: " + BenchmarkNativeDictionary(tuples, tries));
             Console.WriteLine("Fast: " + BenchmarkFastDictionary(tuples, tries));
+            Console.WriteLine("Native: " + BenchmarkNativeDictionary(tuples, tries));
 
-            Console.WriteLine("Native-String: " + BenchmarkNativeDictionaryString(tuplesString, tries));
             Console.WriteLine("Fast-String: " + BenchmarkFastDictionaryString(tuplesString, tries));
+            Console.WriteLine("Native-String: " + BenchmarkNativeDictionaryString(tuplesString, tries));
 
-            Console.WriteLine("Native-String-Out: " + BenchmarkNativeDictionaryStringOut(tuplesString, tries));
             Console.WriteLine("Fast-String-Out: " + BenchmarkFastDictionaryStringOut(tuplesString, tries));
+            Console.WriteLine("Native-String-Out: " + BenchmarkNativeDictionaryStringOut(tuplesString, tries));
+
+            Console.ReadLine();
         }
 
         private static long BenchmarkNativeDictionary(int[] tuples, int tries)
@@ -114,15 +116,16 @@ namespace Dictionary
             var fast = Stopwatch.StartNew();
             for (int i = 0; i < tries; i++)
             {
-                var fastDict = new FastDictionary<int, int>(tuples.Length * 2);
+                var fastDict = new FastDictionary<int, int, EqualityComparer<int>, WeakHash<int>>(tuples.Length * 2);
                 for (int j = 0; j < tuples.Length; j++)
                     fastDict[tuples[j]] = j;
 
-                int k;
+                int k = 0;
                 for (int j = 0; j < tuples.Length; j++)
                 {
-                    fastDict.TryGetValue(tuples[j], out k);
-//                    k = fastDict[tuples[j]];
+                    int dummy;
+                    fastDict.TryGetValue(tuples[j], out dummy);
+                    //k = fastDict[tuples[j]];
                     k++;
                 }
 
@@ -138,7 +141,7 @@ namespace Dictionary
             var fast = Stopwatch.StartNew();
             for (int i = 0; i < tries; i++)
             {
-                var fastDict = new FastDictionary<string, int>(tuples.Length * 2);
+                var fastDict = new FastDictionary<string, int, EqualityComparer<string>, WeakHash<string>> (tuples.Length * 2);
                 for (int j = 0; j < tuples.Length; j++)
                     fastDict[tuples[j]] = j;
 
@@ -162,7 +165,7 @@ namespace Dictionary
             var fast = Stopwatch.StartNew();
             for (int i = 0; i < tries; i++)
             {
-                var fastDict = new FastDictionary<int, string>(tuples.Length * 2);
+                var fastDict = new FastDictionary<int, string, EqualityComparer<int>, WeakHash<int>> (tuples.Length * 2);
                 for (int j = 0; j < tuples.Length; j++)
                     fastDict[j] = tuples[j];
 

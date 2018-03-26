@@ -12,17 +12,17 @@ namespace Dictionary
         [Fact]
         public void Construction()
         {
-            var dict = new FastDictionary<int, int>();
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>();
             Assert.Equal(0, dict.Count);
             Assert.Equal(32, dict.Capacity);
             Assert.NotNull(dict.Comparer);
 
-            dict = new FastDictionary<int, int>(null as IEqualityComparer<int>);
+            dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>> (null as IEqualityComparer<int>);
             Assert.Equal(0, dict.Count);
             Assert.Equal(32, dict.Capacity);
             Assert.NotNull(dict.Comparer);
 
-            dict = new FastDictionary<int, int>(16);
+            dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>> (16);
             Assert.Equal(0, dict.Count);
             Assert.Equal(16, dict.Capacity);
             Assert.NotNull(dict.Comparer);
@@ -31,7 +31,7 @@ namespace Dictionary
         [Fact]
         public void ConstructionWithNonPowerOf2()
         {
-            var dict = new FastDictionary<int, int>(5);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(5);
             Assert.Equal(0, dict.Count);
             Assert.Equal(8, dict.Capacity);
             Assert.NotNull(dict.Comparer);
@@ -41,12 +41,12 @@ namespace Dictionary
         [Fact]
         public void ConstructionWithExplicitZeroAndNegative()
         {
-            var dict = new FastDictionary<int, int>(0);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(0);
             Assert.Equal(0, dict.Count);
             Assert.Equal(4, dict.Capacity);
             Assert.NotNull(dict.Comparer);
 
-            dict = new FastDictionary<int, int>(-1);
+            dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(-1);
             Assert.Equal(0, dict.Count);
             Assert.Equal(4, dict.Capacity);
             Assert.NotNull(dict.Comparer);
@@ -55,11 +55,11 @@ namespace Dictionary
         [Fact]
         public void ConstructionWithFastDictionary()
         {
-            var dict = new FastDictionary<int, int>(200, EqualityComparer<int>.Default);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200, EqualityComparer<int>.Default);
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
-            var fromFastDictionary = new FastDictionary<int, int>(dict.Capacity, dict, EqualityComparer<int>.Default);
+            var fromFastDictionary = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(dict.Capacity, dict, EqualityComparer<int>.Default);
             Assert.Equal(dict.Count, fromFastDictionary.Count);
             Assert.Equal(dict.Capacity, fromFastDictionary.Capacity);
             Assert.Equal(dict.Comparer, fromFastDictionary.Comparer);
@@ -91,11 +91,11 @@ namespace Dictionary
         {
             var equalityComparer = new CustomIntEqualityComparer();
 
-            var dict = new FastDictionary<int, int>(200, equalityComparer);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200, equalityComparer);
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
-            var fromFastDictionary = new FastDictionary<int, int>(dict, EqualityComparer<int>.Default);
+            var fromFastDictionary = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(dict, EqualityComparer<int>.Default);
             Assert.Equal(dict.Count, fromFastDictionary.Count);
             Assert.Equal(dict.Capacity, fromFastDictionary.Capacity);
             Assert.NotSame(dict.Comparer, fromFastDictionary.Comparer);
@@ -117,7 +117,7 @@ namespace Dictionary
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
-            var fromFastDictionary = new FastDictionary<int, int>(dict.Count, dict, EqualityComparer<int>.Default);
+            var fromFastDictionary = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(dict.Count, dict, EqualityComparer<int>.Default);
             Assert.Equal(dict.Count, fromFastDictionary.Count);
             Assert.Equal(dict.Comparer, fromFastDictionary.Comparer);
 
@@ -135,7 +135,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveInsertionsWithIndexerAndWithoutGrow()
         {
-            var dict = new FastDictionary<int, int>(200);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200);
 
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
@@ -162,7 +162,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveInsertionsWithIndexerAndGrow()
         {
-            var dict = new FastDictionary<int, int>(4);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(4);
 
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
@@ -189,7 +189,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveInsertionsWithoutGrow()
         {
-            var dict = new FastDictionary<int, int>(200);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200);
 
             for (int i = 0; i < 100; i++)
                 dict.Add(i, i);
@@ -215,7 +215,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveInsertionsAndGrow()
         {
-            var dict = new FastDictionary<int, int>(4);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(4);
 
             for (int i = 0; i < 100; i++)
                 dict.Add(i, i);
@@ -233,7 +233,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveRemovesWithoutGrow()
         {
-            var dict = new FastDictionary<int, int>(200);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200);
 
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
@@ -256,7 +256,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveRemovesWithGrow()
         {
-            var dict = new FastDictionary<int, int>(4);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(4);
 
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
@@ -279,7 +279,7 @@ namespace Dictionary
         [Fact]
         public void ConsecutiveInsertsWithShrink()
         {
-            var dict = new FastDictionary<int, int>();
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>();
 
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
@@ -301,7 +301,7 @@ namespace Dictionary
         [Fact]
         public void InsertDeleted()
         {
-            var dict = new FastDictionary<int, int>(16);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(16);
 
             dict[1] = 1;
             dict[2] = 2;
@@ -321,7 +321,7 @@ namespace Dictionary
         [Fact]
         public void AddDeleted()
         {
-            var dict = new FastDictionary<int, int>(16);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(16);
 
             dict.Add(1, 1);
             dict.Add(2, 2);
@@ -339,7 +339,7 @@ namespace Dictionary
         [Fact]
         public void Duplicates()
         {
-            var dict = new FastDictionary<int, int>(16);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(16);
             dict[1] = 1;
             dict[1] = 2;
 
@@ -351,7 +351,7 @@ namespace Dictionary
         [Fact]
         public void EnumeratorsWithJumps()
         {
-            var dict = new FastDictionary<int, int>(16);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(16);
             dict[1] = 1;
             dict[2] = 2;
             dict[15] = 15;
@@ -375,7 +375,7 @@ namespace Dictionary
         [Fact]
         public void Clear()
         {
-            var dict = new FastDictionary<int, int>(200);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200);
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
@@ -391,7 +391,7 @@ namespace Dictionary
         [Fact]
         public void InsertionAfterClear()
         {
-            var dict = new FastDictionary<int, int>(200);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(200);
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
@@ -416,7 +416,7 @@ namespace Dictionary
         [Fact]
         public void KeysArePresent()
         {
-            var dict = new FastDictionary<int, int>(4);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(4);
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
@@ -433,7 +433,7 @@ namespace Dictionary
         [Fact]
         public void ValuesArePresent()
         {
-            var dict = new FastDictionary<int, int>(4);
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(4);
             for (int i = 0; i < 100; i++)
                 dict[i] = i;
 
@@ -469,7 +469,7 @@ namespace Dictionary
         [Fact]
         public void UseOfOfBoundsHashes()
         {
-            var dict = new FastDictionary<int, int>(16, new ForceOutOfRangeHashesEqualityComparer());
+            var dict = new FastDictionary<int, int, IEqualityComparer<int>, WeakHash<int>>(16, new ForceOutOfRangeHashesEqualityComparer());
             dict[1] = 1;
             dict[2] = 2;
 
@@ -488,7 +488,7 @@ namespace Dictionary
         [Fact]
         public void InsertAndRemoveWithoutGrowth()
         {
-            var dict = new FastDictionary<long, int>(8);
+            var dict = new FastDictionary<long, int, IEqualityComparer<long>, WeakHash<long>>(8);
 
             for (int i = 0; i < 100; i++)
             {
@@ -505,7 +505,7 @@ namespace Dictionary
         [Fact]
         public void AddAndRemoveWithoutGrowth()
         {
-            var dict = new FastDictionary<long, int>(8);
+            var dict = new FastDictionary<long, int, IEqualityComparer<long>, WeakHash<long>>(8);
 
             for (int i = 0; i < 100; i++)
             {
