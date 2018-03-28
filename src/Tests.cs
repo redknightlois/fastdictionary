@@ -85,7 +85,20 @@ namespace Dictionary
                 return obj;
             }
         }
+ 
+		private class CollidingStringEqualityComparer : EqualityComparer<string>
+        {
+            public override bool Equals(string x, string y)
+            {
+                return x == y;
+            }
 
+            public override int GetHashCode(string obj)
+            {
+                return obj.Length;
+            }
+        }
+		
         [Fact]
         public void ConstructionWithFastDictionaryAndDifferentComparer()
         {
@@ -518,7 +531,30 @@ namespace Dictionary
             Assert.Equal(0, dict.Count);
             Assert.Equal(8, dict.Capacity);
         }
+    
+        [Fact]
+        public void AddWithHashCollision()
+        {
+          var dict = new FastDictionary<string, int>( new CollidingStringEqualityComparer() );
+       
+          dict.Add("a",1);
+          dict.Add("b",1);
+          dict.Remove("a");
+        
+          Assert.Throws<ArgumentException>(() => dict.Add("b", 1));
+        }
 
-
+        [Fact]
+        public void UpdateWithHashCollision()
+        {
+          var dict = new FastDictionary<string, int>(new CollidingStringEqualityComparer());
+       
+           dict["a"] = 1;
+           dict["b"] = 1;
+           dict.Remove("a");
+           dict["b"] = 1;
+       
+           Assert.Equal(1, dict.Count);
+        }
     }
 }

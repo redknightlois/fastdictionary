@@ -245,19 +245,10 @@ namespace Dictionary
 
                     goto SET;
                 }
-                else if (nHash == kDeletedHash)
-                {
-                    _numberOfDeleted--;
-                    _size++;
-
-                    goto SET;
-                }
-                else
-                {
-                    if (nHash == uhash && comparer.Equals(_entries[bucket].Key, key))
-                        throw new ArgumentException("Cannot add duplicated key.", "key");
-                }
-
+                
+                if (nHash == uhash && comparer.Equals(_entries[bucket].Key, key))
+                   throw new ArgumentException("Cannot add duplicated key.", "key");
+                
                 bucket = (bucket + numProbes) % _capacity;
                 numProbes++;
             }
@@ -387,19 +378,10 @@ namespace Dictionary
 
                         goto SET;
                     }
-                    else if (nHash == kDeletedHash)
-                    {
-                        _numberOfDeleted--;
-                        _size++;
-
+                    
+                    if (nHash == uhash && comparer.Equals(_entries[bucket].Key, key))
                         goto SET;
-                    }
-                    else
-                    {
-                        if (nHash == uhash && comparer.Equals(_entries[bucket].Key, key))
-                            goto SET;
-                    }
-
+                    
                     bucket = (bucket + numProbes) % _capacity;
                     numProbes++;
 
